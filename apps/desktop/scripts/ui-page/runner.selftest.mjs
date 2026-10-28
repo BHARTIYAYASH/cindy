@@ -8,6 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { buildPage, scanPage, inputsChanged } from './build.mjs';
+import { adhocPage } from './registry.mjs';
 
 const cli = fileURLToPath(new URL('./cli.mjs', import.meta.url));
 const harness = fileURLToPath(new URL('./harness/index.tsx', import.meta.url));
@@ -178,3 +180,35 @@ test(
     assert.equal(leftoverRunners(), '');
   },
 );
+
+test('URL imports emit readable assets and fingerprint their actual files (#6670)', async () => {
+  const asset = path.join(dir, 'raw-worklet.js');
+  const source = 'registerProcessor("test-worklet", class extends AudioWorkletProcessor {});';
+  await writeFile(asset, source);
+  const file = path.join(dir, 'url-import.ts');
+  await writeFile(file, 'import url from "./raw-worklet.js?url"; globalThis.workletUrl = url;');
+  const definition = adhocPage(file);
+  const scanned = await scanPage(definition);
+  assert.ok(scanned.inputs.includes(asset));
+  assert.ok(scanned.inputs.every((input) => !input.includes('?url')));
+  const bundle = await buildPage(definition);
+  const emitted = [...bundle.files].find(([url]) => /^\/assets\/raw-worklet-.*\.js$/.test(url));
+  assert.ok(emitted, 'a URL import must emit a separate JavaScript asset');
+  assert.equal(emitted[1].body.toString(), source);
+  assert.equal(emitted[1].contentType, 'text/javascript');
+  assert.ok(bundle.files.get('/page.js').body.toString().includes(JSON.stringify(emitted[0])));
+  assert.ok(bundle.fingerprints.has(asset));
+  assert.equal(await inputsChanged(bundle.fingerprints), false);
+  await writeFile(asset, source + '\n// changed');
+  assert.equal(await inputsChanged(bundle.fingerprints), true);
+
+  const historical = source + '\n// historical';
+  const overlay = {
+    has: (input) => input === asset,
+    get: (input) => input === asset ? historical : undefined,
+    resolve: () => null,
+  };
+  const compared = await buildPage(definition, overlay);
+  const oldAsset = [...compared.files].find(([url]) => /^\/assets\/raw-worklet-.*\.js$/.test(url));
+  assert.equal(oldAsset[1].body.toString(), historical);
+});
