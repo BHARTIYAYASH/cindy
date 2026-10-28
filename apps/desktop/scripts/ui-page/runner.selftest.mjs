@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
@@ -53,7 +53,7 @@ async function entry(name, source) {
 }
 
 before(async () => {
-  dir = await mkdtemp(path.join(os.tmpdir(), 'cindy-ui-selftest-'));
+  dir = await realpath(await mkdtemp(path.join(os.tmpdir(), 'cindy-ui-selftest-')));
 });
 after(async () => {
   await rm(dir, { recursive: true, force: true });
